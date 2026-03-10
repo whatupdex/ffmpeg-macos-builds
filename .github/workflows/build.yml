@@ -1,0 +1,122 @@
+name: Build ffmpeg (LGPL, universal macOS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ffmpeg_version:
+        description: 'ffmpeg version to build (e.g. 7.1.1)'
+        required: true
+        default: '7.1.1'
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            arch: arm64
+          - os: macos-13
+            arch: x86_64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Install build tools
+        run: brew install nasm
+
+      - name: Download ffmpeg source
+        run: |
+          VERSION="${{ github.event.inputs.ffmpeg_version }}"
+          curl -fL "https://ffmpeg.org/releases/ffmpeg-${VERSION}.tar.gz" -o ffmpeg.tar.gz
+          tar xf ffmpeg.tar.gz
+          mv "ffmpeg-${VERSION}" ffmpeg-src
+
+      - name: Configure
+        working-directory: ffmpeg-src
+        run: |
+          ./configure \
+            --arch=${{ matrix.arch }} \
+            --disable-gpl \
+            --disable-nonfree \
+            --disable-autodetect \
+            --enable-static \
+            --disable-shared \
+            --disable-ffplay \
+            --disable-ffprobe \
+            --disable-doc \
+            --disable-debug \
+            --extra-cflags="-arch ${{ matrix.arch }}" \
+            --extra-ldflags="-arch ${{ matrix.arch }}"
+
+      - name: Build
+        working-directory: ffmpeg-src
+        run: make -j$(sysctl -n hw.ncpu)
+
+      - name: Prepare binary
+        run: |
+          cp ffmpeg-src/ffmpeg ffmpeg_${{ matrix.arch }}
+          strip ffmpeg_${{ matrix.arch }}
+          file ffmpeg_${{ matrix.arch }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-${{ matrix.arch }}
+          path: ffmpeg_${{ matrix.arch }}
+
+  release:
+    name: Create universal binary + release
+    needs: build
+    runs-on: macos-15
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download arm64
+        uses: actions/download-artifact@v4
+        with:
+          name: ffmpeg-arm64
+
+      - name: Download x86_64
+        uses: actions/download-artifact@v4
+        with:
+          name: ffmpeg-x86_64
+
+      - name: Create universal binary
+        run: |
+          lipo -create ffmpeg_arm64 ffmpeg_x86_64 -output ffmpeg
+          chmod +x ffmpeg
+          file ffmpeg
+          lipo -info ffmpeg
+
+      - name: Generate checksum
+        run: |
+          shasum -a 256 ffmpeg | awk '{print $1}' > ffmpeg.sha256
+          echo "SHA256: $(cat ffmpeg.sha256)"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ github.event.inputs.ffmpeg_version }}"
+          TAG="v${VERSION}"
+          gh release create "$TAG" \
+            ffmpeg \
+            ffmpeg.sha256 \
+            --repo "${{ github.repository }}" \
+            --title "ffmpeg ${VERSION}" \
+            --notes "## ffmpeg ${VERSION} — universal macOS binary (arm64 + x86_64)
+
+Built from official ffmpeg source: https://ffmpeg.org/releases/ffmpeg-${VERSION}.tar.gz
+
+### Build configuration
+\`\`\`
+--disable-gpl --disable-nonfree --disable-autodetect
+--enable-static --disable-shared
+--disable-ffplay --disable-ffprobe --disable-doc --disable-debug
+\`\`\`
+
+### License
+FFmpeg is licensed under the GNU Lesser General Public License v2.1 or later (LGPLv2.1+).
+Source: https://ffmpeg.org/download.html"
