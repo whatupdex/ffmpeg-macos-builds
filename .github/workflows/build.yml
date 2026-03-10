@@ -101,7 +101,7 @@ jobs:
           VERSION="${{ github.event.inputs.ffmpeg_version }}"
           TAG="v${VERSION}"
           NOTES="ffmpeg ${VERSION} universal macOS binary (arm64 + x86_64). Built from https://ffmpeg.org/releases/ffmpeg-${VERSION}.tar.gz with --disable-gpl --disable-nonfree --disable-autodetect --enable-static --enable-libmp3lame. Licensed LGPLv2.1+."
-          gh release create "$TAG" \
+          gh release create "$TAG" --clobber \
             ffmpeg \
             ffmpeg.sha256 \
             --repo "${{ github.repository }}" \
