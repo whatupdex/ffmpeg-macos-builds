@@ -17,7 +17,17 @@ jobs:
 
     steps:
       - name: Install build tools
-        run: brew install nasm
+        run: |
+          brew install nasm lame
+          # Also build lame for x86_64 cross-compile (brew gives arm64 on Apple Silicon runners)
+          curl -fL "https://downloads.sourceforge.net/lame/lame-3.100.tar.gz" -o lame.tar.gz
+          tar xf lame.tar.gz
+          cd lame-3.100
+          ./configure --host=x86_64-apple-darwin --prefix=/usr/local/lame-x86_64 \
+            CC=clang CFLAGS="-arch x86_64" LDFLAGS="-arch x86_64" \
+            --disable-shared --enable-static --disable-frontend
+          make -j$(sysctl -n hw.ncpu)
+          sudo make install
 
       - name: Download ffmpeg source
         run: |
@@ -29,6 +39,7 @@ jobs:
       - name: Build arm64 (native)
         run: |
           cd ffmpeg-src
+          LAME_PREFIX=$(brew --prefix lame)
           ./configure \
             --arch=arm64 \
             --disable-gpl \
@@ -40,8 +51,9 @@ jobs:
             --disable-ffprobe \
             --disable-doc \
             --disable-debug \
-            --extra-cflags="-arch arm64" \
-            --extra-ldflags="-arch arm64"
+            --enable-libmp3lame \
+            --extra-cflags="-arch arm64 -I${LAME_PREFIX}/include" \
+            --extra-ldflags="-arch arm64 -L${LAME_PREFIX}/lib"
           make -j$(sysctl -n hw.ncpu)
           cp ffmpeg ../ffmpeg_arm64
           strip ../ffmpeg_arm64
@@ -63,8 +75,9 @@ jobs:
             --disable-ffprobe \
             --disable-doc \
             --disable-debug \
-            --extra-cflags="-arch x86_64" \
-            --extra-ldflags="-arch x86_64"
+            --enable-libmp3lame \
+            --extra-cflags="-arch x86_64 -I/usr/local/lame-x86_64/include" \
+            --extra-ldflags="-arch x86_64 -L/usr/local/lame-x86_64/lib"
           make -j$(sysctl -n hw.ncpu)
           cp ffmpeg ../ffmpeg_x86_64
           strip ../ffmpeg_x86_64
@@ -87,7 +100,7 @@ jobs:
         run: |
           VERSION="${{ github.event.inputs.ffmpeg_version }}"
           TAG="v${VERSION}"
-          NOTES="ffmpeg ${VERSION} universal macOS binary (arm64 + x86_64). Built from https://ffmpeg.org/releases/ffmpeg-${VERSION}.tar.gz with --disable-gpl --disable-nonfree --disable-autodetect --enable-static. Licensed LGPLv2.1+."
+          NOTES="ffmpeg ${VERSION} universal macOS binary (arm64 + x86_64). Built from https://ffmpeg.org/releases/ffmpeg-${VERSION}.tar.gz with --disable-gpl --disable-nonfree --disable-autodetect --enable-static --enable-libmp3lame. Licensed LGPLv2.1+."
           gh release create "$TAG" \
             ffmpeg \
             ffmpeg.sha256 \
