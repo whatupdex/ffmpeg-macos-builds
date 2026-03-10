@@ -101,22 +101,10 @@ jobs:
         run: |
           VERSION="${{ github.event.inputs.ffmpeg_version }}"
           TAG="v${VERSION}"
+          NOTES="ffmpeg ${VERSION} universal macOS binary (arm64 + x86_64). Built from https://ffmpeg.org/releases/ffmpeg-${VERSION}.tar.gz with --disable-gpl --disable-nonfree --disable-autodetect --enable-static. Licensed LGPLv2.1+."
           gh release create "$TAG" \
             ffmpeg \
             ffmpeg.sha256 \
             --repo "${{ github.repository }}" \
             --title "ffmpeg ${VERSION}" \
-            --notes "## ffmpeg ${VERSION} — universal macOS binary (arm64 + x86_64)
-
-Built from official ffmpeg source: https://ffmpeg.org/releases/ffmpeg-${VERSION}.tar.gz
-
-### Build configuration
-\`\`\`
---disable-gpl --disable-nonfree --disable-autodetect
---enable-static --disable-shared
---disable-ffplay --disable-ffprobe --disable-doc --disable-debug
-\`\`\`
-
-### License
-FFmpeg is licensed under the GNU Lesser General Public License v2.1 or later (LGPLv2.1+).
-Source: https://ffmpeg.org/download.html"
+            --notes "$NOTES"
