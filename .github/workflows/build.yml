@@ -9,17 +9,11 @@ on:
         default: '7.1.1'
 
 jobs:
-  build:
-    name: Build (${{ matrix.arch }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-15
-            arch: arm64
-          - os: macos-13
-            arch: x86_64
-    runs-on: ${{ matrix.os }}
+  build-and-release:
+    name: Build universal + release
+    runs-on: macos-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Install build tools
@@ -32,11 +26,11 @@ jobs:
           tar xf ffmpeg.tar.gz
           mv "ffmpeg-${VERSION}" ffmpeg-src
 
-      - name: Configure
-        working-directory: ffmpeg-src
+      - name: Build arm64 (native)
         run: |
+          cd ffmpeg-src
           ./configure \
-            --arch=${{ matrix.arch }} \
+            --arch=arm64 \
             --disable-gpl \
             --disable-nonfree \
             --disable-autodetect \
@@ -46,48 +40,40 @@ jobs:
             --disable-ffprobe \
             --disable-doc \
             --disable-debug \
-            --extra-cflags="-arch ${{ matrix.arch }}" \
-            --extra-ldflags="-arch ${{ matrix.arch }}"
+            --extra-cflags="-arch arm64" \
+            --extra-ldflags="-arch arm64"
+          make -j$(sysctl -n hw.ncpu)
+          cp ffmpeg ../ffmpeg_arm64
+          strip ../ffmpeg_arm64
+          file ../ffmpeg_arm64
+          make distclean
 
-      - name: Build
-        working-directory: ffmpeg-src
-        run: make -j$(sysctl -n hw.ncpu)
-
-      - name: Prepare binary
+      - name: Build x86_64 (cross-compile)
         run: |
-          cp ffmpeg-src/ffmpeg ffmpeg_${{ matrix.arch }}
-          strip ffmpeg_${{ matrix.arch }}
-          file ffmpeg_${{ matrix.arch }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ffmpeg-${{ matrix.arch }}
-          path: ffmpeg_${{ matrix.arch }}
-
-  release:
-    name: Create universal binary + release
-    needs: build
-    runs-on: macos-15
-    permissions:
-      contents: write
-
-    steps:
-      - name: Download arm64
-        uses: actions/download-artifact@v4
-        with:
-          name: ffmpeg-arm64
-
-      - name: Download x86_64
-        uses: actions/download-artifact@v4
-        with:
-          name: ffmpeg-x86_64
+          cd ffmpeg-src
+          ./configure \
+            --arch=x86_64 \
+            --enable-cross-compile \
+            --disable-gpl \
+            --disable-nonfree \
+            --disable-autodetect \
+            --enable-static \
+            --disable-shared \
+            --disable-ffplay \
+            --disable-ffprobe \
+            --disable-doc \
+            --disable-debug \
+            --extra-cflags="-arch x86_64" \
+            --extra-ldflags="-arch x86_64"
+          make -j$(sysctl -n hw.ncpu)
+          cp ffmpeg ../ffmpeg_x86_64
+          strip ../ffmpeg_x86_64
+          file ../ffmpeg_x86_64
 
       - name: Create universal binary
         run: |
           lipo -create ffmpeg_arm64 ffmpeg_x86_64 -output ffmpeg
           chmod +x ffmpeg
-          file ffmpeg
           lipo -info ffmpeg
 
       - name: Generate checksum
