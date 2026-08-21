@@ -1,6 +1,6 @@
 name: Build ffmpeg (LGPL, universal macOS, drawtext + videotoolbox)
 
-# Separate release track from build.yml — produces a build for BurnInProxy
+# Separate release track from build.yml; produces a build for BurnInProxy
 # specifically (needs drawtext + hardware accel + ffprobe, none of which
 # the original inDEXdown-targeted build includes). Does not touch or
 # depend on anything in build.yml; safe to run independently.
@@ -38,11 +38,13 @@ jobs:
           sudo make install
           cd ..
 
-          # freetype for x86_64 — minimal config, no harfbuzz/png/bz2/brotli,
+          # freetype for x86_64; minimal config, no harfbuzz/png/bz2/brotli,
           # keeps this a self-contained static lib with no extra cross-compiled deps.
-          curl -fL "https://download.savannah.gnu.org/releases/freetype/freetype-2.13.3.tar.gz" -o freetype.tar.gz
+          # Using GitHub's source archive, not Savannah's mirror -- the Savannah
+          # download returned a 502 on first attempt, GitHub's CDN is more reliable.
+          curl -fL "https://github.com/freetype/freetype/archive/refs/tags/VER-2-13-3.tar.gz" -o freetype.tar.gz
           tar xf freetype.tar.gz
-          cd freetype-2.13.3
+          cd freetype-VER-2-13-3
           ./configure --host=x86_64-apple-darwin --prefix=/usr/local/freetype-x86_64 \
             CC=clang CFLAGS="-arch x86_64" LDFLAGS="-arch x86_64" \
             --disable-shared --enable-static \
@@ -136,7 +138,7 @@ jobs:
         run: |
           VERSION="${{ github.event.inputs.ffmpeg_version }}"
           TAG="drawtext-v${VERSION}"
-          NOTES="ffmpeg ${VERSION} + ffprobe, universal macOS binaries (arm64 + x86_64), with drawtext and VideoToolbox hardware acceleration enabled. Built from https://ffmpeg.org/releases/ffmpeg-${VERSION}.tar.gz with --disable-gpl --disable-nonfree --disable-autodetect --enable-static --enable-libmp3lame --enable-libfreetype --enable-videotoolbox. Licensed LGPLv2.1+. Separate release track for BurnInProxy — does not affect the main ffmpeg build used by inDEXdown."
+          NOTES="ffmpeg ${VERSION} + ffprobe, universal macOS binaries (arm64 + x86_64), with drawtext and VideoToolbox hardware acceleration enabled. Built from https://ffmpeg.org/releases/ffmpeg-${VERSION}.tar.gz with --disable-gpl --disable-nonfree --disable-autodetect --enable-static --enable-libmp3lame --enable-libfreetype --enable-videotoolbox. Licensed LGPLv2.1+. Separate release track for BurnInProxy; does not affect the main ffmpeg build used by inDEXdown."
           gh release delete "$TAG" --repo "${{ github.repository }}" --yes 2>/dev/null || true
           git push origin ":refs/tags/$TAG" 2>/dev/null || true
           gh release create "$TAG" \
