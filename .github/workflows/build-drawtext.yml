@@ -7,6 +7,26 @@ name: Build ffmpeg (LGPL, universal macOS, drawtext + videotoolbox)
 #
 # To use: copy this file into .github/workflows/ in the
 # whatupdex/ffmpeg-macos-builds repo alongside the existing build.yml.
+#
+# Everything ffmpeg links against (freetype, harfbuzz) is built from
+# source as a static archive for each arch, rather than pointing at
+# Homebrew's copies. Homebrew ships both a .a and a .dylib for these
+# libraries, and the linker silently prefers the .dylib when both exist
+# at the same -L path -- so a naive build ends up depending on Homebrew
+# being installed on whatever Mac runs the resulting ffmpeg, defeating
+# the whole point of bundling it into the app. Building from source into
+# its own prefix leaves only a .a there, so there's no ambiguity.
+#
+# ffmpeg's drawtext filter requires BOTH libfreetype and libharfbuzz as
+# of ffmpeg 7.x (drawtext_filter_deps="libfreetype libharfbuzz" in
+# ffmpeg's configure) -- freetype alone is not enough despite being the
+# only thing older guides mention. harfbuzz in turn needs to be built
+# with its own freetype integration enabled (-Dfreetype=enabled) since
+# vf_drawtext.c calls hb_ft_font_create directly.
+#
+# libmp3lame is intentionally not built: BurnInProxy only ever encodes
+# audio with ffmpeg's native "aac" encoder, never mp3, so there is
+# nothing that needs it.
 
 on:
   workflow_dispatch:
@@ -15,6 +35,14 @@ on:
         description: 'ffmpeg version to build (e.g. 7.1.1)'
         required: true
         default: '7.1.1'
+      freetype_version:
+        description: 'freetype version to build (e.g. 2.13.3)'
+        required: true
+        default: '2.13.3'
+      harfbuzz_version:
+        description: 'harfbuzz version to build (e.g. 14.3.1)'
+        required: true
+        default: '14.3.1'
 
 jobs:
   build-and-release:
@@ -26,47 +54,132 @@ jobs:
     steps:
       - name: Install build tools
         run: |
-          brew install nasm lame freetype
-          # Cross-compile deps for x86_64 (Apple Silicon runner only has arm64-native Homebrew libs)
-          curl -fL "https://downloads.sourceforge.net/lame/lame-3.100.tar.gz" -o lame.tar.gz
-          tar xf lame.tar.gz
-          cd lame-3.100
-          ./configure --host=x86_64-apple-darwin --prefix=/usr/local/lame-x86_64 \
-            CC=clang CFLAGS="-arch x86_64" LDFLAGS="-arch x86_64" \
-            --disable-shared --enable-static --disable-frontend
-          make -j$(sysctl -n hw.ncpu)
-          sudo make install
-          cd ..
+          brew install nasm meson ninja pkg-config
 
-          # freetype for x86_64; minimal config, no harfbuzz/png/bz2/brotli,
-          # keeps this a self-contained static lib with no extra cross-compiled deps.
-          # Use the official release tarball, not a GitHub source snapshot -- the
+      - name: Download sources
+        run: |
+          FT_VERSION="${{ github.event.inputs.freetype_version }}"
+          HB_VERSION="${{ github.event.inputs.harfbuzz_version }}"
+          FFMPEG_VERSION="${{ github.event.inputs.ffmpeg_version }}"
+
+          # Official release tarball, not a GitHub source snapshot -- the
           # snapshot references a git submodule (subprojects/dlg) that isn't
-          # present without a real git checkout and fails to build. The release
-          # tarball is self-contained. Savannah's server occasionally 502s
-          # transiently, so retry rather than switch source.
-          curl -fL --retry 5 --retry-delay 5 "https://download.savannah.gnu.org/releases/freetype/freetype-2.13.3.tar.gz" -o freetype.tar.gz
+          # present without a real git checkout and fails to build. Savannah's
+          # server occasionally 502s transiently, so retry rather than switch
+          # source.
+          curl -fL --retry 5 --retry-delay 5 "https://download.savannah.gnu.org/releases/freetype/freetype-${FT_VERSION}.tar.gz" -o freetype.tar.gz
           tar xf freetype.tar.gz
-          cd freetype-2.13.3
-          ./configure --host=x86_64-apple-darwin --prefix=/usr/local/freetype-x86_64 \
+          mv "freetype-${FT_VERSION}" freetype-src
+
+          curl -fL --retry 5 --retry-delay 5 "https://github.com/harfbuzz/harfbuzz/releases/download/${HB_VERSION}/harfbuzz-${HB_VERSION}.tar.xz" -o harfbuzz.tar.xz
+          tar xf harfbuzz.tar.xz
+          mv "harfbuzz-${HB_VERSION}" harfbuzz-src
+
+          curl -fL --retry 5 --retry-delay 5 "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.gz" -o ffmpeg.tar.gz
+          tar xf ffmpeg.tar.gz
+          mv "ffmpeg-${FFMPEG_VERSION}" ffmpeg-src
+
+      - name: Write meson cross file for x86_64
+        run: |
+          cat > cross-x86_64.ini << 'EOF'
+          [binaries]
+          c = 'clang'
+          cpp = 'clang++'
+          ar = 'ar'
+          strip = 'strip'
+          pkg-config = 'pkg-config'
+
+          [built-in options]
+          c_args = ['-arch', 'x86_64']
+          c_link_args = ['-arch', 'x86_64']
+          cpp_args = ['-arch', 'x86_64']
+          cpp_link_args = ['-arch', 'x86_64']
+
+          [host_machine]
+          system = 'darwin'
+          cpu_family = 'x86_64'
+          cpu = 'x86_64'
+          endian = 'little'
+          EOF
+
+      - name: Build freetype (arm64, static)
+        run: |
+          cp -r freetype-src freetype-src-arm64
+          cd freetype-src-arm64
+          ./configure --prefix="${GITHUB_WORKSPACE}/freetype-arm64" \
+            --disable-shared --enable-static \
+            --without-harfbuzz --without-png --without-bzip2 --without-brotli --without-zlib
+          make -j$(sysctl -n hw.ncpu)
+          make install
+
+      - name: Build freetype (x86_64, static, cross-compile)
+        run: |
+          cp -r freetype-src freetype-src-x86_64
+          cd freetype-src-x86_64
+          ./configure --host=x86_64-apple-darwin --prefix="${GITHUB_WORKSPACE}/freetype-x86_64" \
             CC=clang CFLAGS="-arch x86_64" LDFLAGS="-arch x86_64" \
             --disable-shared --enable-static \
             --without-harfbuzz --without-png --without-bzip2 --without-brotli --without-zlib
           make -j$(sysctl -n hw.ncpu)
-          sudo make install
+          make install
 
-      - name: Download ffmpeg source
+      - name: Build harfbuzz (arm64, static)
         run: |
-          VERSION="${{ github.event.inputs.ffmpeg_version }}"
-          curl -fL "https://ffmpeg.org/releases/ffmpeg-${VERSION}.tar.gz" -o ffmpeg.tar.gz
-          tar xf ffmpeg.tar.gz
-          mv "ffmpeg-${VERSION}" ffmpeg-src
+          export PKG_CONFIG_PATH="${GITHUB_WORKSPACE}/freetype-arm64/lib/pkgconfig"
+          cd harfbuzz-src
+          meson setup build-arm64 \
+            --default-library=static \
+            --buildtype=release \
+            -Dfreetype=enabled \
+            -Dglib=disabled \
+            -Dgobject=disabled \
+            -Dicu=disabled \
+            -Dcairo=disabled \
+            -Dpng=disabled \
+            -Dzlib=disabled \
+            -Draster=disabled \
+            -Dvector=disabled \
+            -Dgpu=disabled \
+            -Dsubset=disabled \
+            -Ddocs=disabled \
+            -Dtests=disabled \
+            -Dbenchmark=disabled \
+            -Dutilities=disabled \
+            --prefix="${GITHUB_WORKSPACE}/harfbuzz-arm64"
+          ninja -C build-arm64 -j$(sysctl -n hw.ncpu) install
 
-      - name: Build arm64 (native)
+      - name: Build harfbuzz (x86_64, static, cross-compile)
+        run: |
+          export PKG_CONFIG_PATH="${GITHUB_WORKSPACE}/freetype-x86_64/lib/pkgconfig"
+          cd harfbuzz-src
+          meson setup build-x86_64 \
+            --cross-file "${GITHUB_WORKSPACE}/cross-x86_64.ini" \
+            --default-library=static \
+            --buildtype=release \
+            -Dfreetype=enabled \
+            -Dglib=disabled \
+            -Dgobject=disabled \
+            -Dicu=disabled \
+            -Dcairo=disabled \
+            -Dpng=disabled \
+            -Dzlib=disabled \
+            -Draster=disabled \
+            -Dvector=disabled \
+            -Dgpu=disabled \
+            -Dsubset=disabled \
+            -Ddocs=disabled \
+            -Dtests=disabled \
+            -Dbenchmark=disabled \
+            -Dutilities=disabled \
+            --prefix="${GITHUB_WORKSPACE}/harfbuzz-x86_64"
+          ninja -C build-x86_64 -j$(sysctl -n hw.ncpu) install
+
+      - name: Build ffmpeg arm64 (native)
         run: |
           cd ffmpeg-src
-          LAME_PREFIX=$(brew --prefix lame)
-          FREETYPE_PREFIX=$(brew --prefix freetype)
+          FT="${GITHUB_WORKSPACE}/freetype-arm64"
+          HB="${GITHUB_WORKSPACE}/harfbuzz-arm64"
+          export PKG_CONFIG_PATH="${FT}/lib/pkgconfig:${HB}/lib/pkgconfig"
           ./configure \
             --arch=arm64 \
             --disable-gpl \
@@ -77,11 +190,11 @@ jobs:
             --disable-ffplay \
             --disable-doc \
             --disable-debug \
-            --enable-libmp3lame \
             --enable-libfreetype \
+            --enable-libharfbuzz \
             --enable-videotoolbox \
-            --extra-cflags="-arch arm64 -I${LAME_PREFIX}/include -I${FREETYPE_PREFIX}/include/freetype2" \
-            --extra-ldflags="-arch arm64 -L${LAME_PREFIX}/lib -L${FREETYPE_PREFIX}/lib"
+            --extra-cflags="-arch arm64 -I${FT}/include/freetype2 -I${HB}/include/harfbuzz" \
+            --extra-ldflags="-arch arm64 -L${FT}/lib -L${HB}/lib"
           make -j$(sysctl -n hw.ncpu)
           cp ffmpeg ../ffmpeg_arm64
           cp ffprobe ../ffprobe_arm64
@@ -89,9 +202,12 @@ jobs:
           file ../ffmpeg_arm64 ../ffprobe_arm64
           make distclean
 
-      - name: Build x86_64 (cross-compile)
+      - name: Build ffmpeg x86_64 (cross-compile)
         run: |
           cd ffmpeg-src
+          FT="${GITHUB_WORKSPACE}/freetype-x86_64"
+          HB="${GITHUB_WORKSPACE}/harfbuzz-x86_64"
+          export PKG_CONFIG_PATH="${FT}/lib/pkgconfig:${HB}/lib/pkgconfig"
           ./configure \
             --arch=x86_64 \
             --enable-cross-compile \
@@ -103,11 +219,11 @@ jobs:
             --disable-ffplay \
             --disable-doc \
             --disable-debug \
-            --enable-libmp3lame \
             --enable-libfreetype \
+            --enable-libharfbuzz \
             --enable-videotoolbox \
-            --extra-cflags="-arch x86_64 -I/usr/local/lame-x86_64/include -I/usr/local/freetype-x86_64/include/freetype2" \
-            --extra-ldflags="-arch x86_64 -L/usr/local/lame-x86_64/lib -L/usr/local/freetype-x86_64/lib"
+            --extra-cflags="-arch x86_64 -I${FT}/include/freetype2 -I${HB}/include/harfbuzz" \
+            --extra-ldflags="-arch x86_64 -L${FT}/lib -L${HB}/lib"
           make -j$(sysctl -n hw.ncpu)
           cp ffmpeg ../ffmpeg_x86_64
           cp ffprobe ../ffprobe_x86_64
@@ -122,11 +238,21 @@ jobs:
           lipo -info ffmpeg
           lipo -info ffprobe
 
-      - name: Sanity check (drawtext + videotoolbox present)
+      - name: Sanity check (drawtext, videotoolbox, no Homebrew dependency)
         run: |
           ./ffmpeg -hide_banner -filters | grep -q drawtext || (echo "drawtext missing!" && exit 1)
           ./ffmpeg -hide_banner -hwaccels | grep -q videotoolbox || (echo "videotoolbox missing!" && exit 1)
-          echo "drawtext + videotoolbox confirmed present"
+          if otool -L ./ffmpeg | grep -qi "/opt/homebrew\|/usr/local/opt\|/usr/local/lib"; then
+            echo "ffmpeg links against Homebrew -- would break on a machine without it installed!"
+            otool -L ./ffmpeg
+            exit 1
+          fi
+          if otool -L ./ffprobe | grep -qi "/opt/homebrew\|/usr/local/opt\|/usr/local/lib"; then
+            echo "ffprobe links against Homebrew -- would break on a machine without it installed!"
+            otool -L ./ffprobe
+            exit 1
+          fi
+          echo "drawtext + videotoolbox confirmed present, no Homebrew dependency"
 
       - name: Generate checksums
         run: |
@@ -141,7 +267,7 @@ jobs:
         run: |
           VERSION="${{ github.event.inputs.ffmpeg_version }}"
           TAG="drawtext-v${VERSION}"
-          NOTES="ffmpeg ${VERSION} + ffprobe, universal macOS binaries (arm64 + x86_64), with drawtext and VideoToolbox hardware acceleration enabled. Built from https://ffmpeg.org/releases/ffmpeg-${VERSION}.tar.gz with --disable-gpl --disable-nonfree --disable-autodetect --enable-static --enable-libmp3lame --enable-libfreetype --enable-videotoolbox. Licensed LGPLv2.1+. Separate release track for BurnInProxy; does not affect the main ffmpeg build used by inDEXdown."
+          NOTES="ffmpeg ${VERSION} + ffprobe, universal macOS binaries (arm64 + x86_64), with drawtext and VideoToolbox hardware acceleration enabled. Built from https://ffmpeg.org/releases/ffmpeg-${VERSION}.tar.gz with --disable-gpl --disable-nonfree --disable-autodetect --enable-static --enable-libfreetype --enable-libharfbuzz --enable-videotoolbox. freetype and harfbuzz are built from source as static archives, so these binaries do not depend on Homebrew being installed. Licensed LGPLv2.1+. Separate release track for BurnInProxy; does not affect the main ffmpeg build used by inDEXdown."
           gh release delete "$TAG" --repo "${{ github.repository }}" --yes 2>/dev/null || true
           git push origin ":refs/tags/$TAG" 2>/dev/null || true
           gh release create "$TAG" \
