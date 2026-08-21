@@ -1,0 +1,146 @@
+name: Build ffmpeg (LGPL, universal macOS, drawtext + videotoolbox)
+
+# Separate release track from build.yml — produces a build for BurnInProxy
+# specifically (needs drawtext + hardware accel + ffprobe, none of which
+# the original inDEXdown-targeted build includes). Does not touch or
+# depend on anything in build.yml; safe to run independently.
+#
+# To use: copy this file into .github/workflows/ in the
+# whatupdex/ffmpeg-macos-builds repo alongside the existing build.yml.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ffmpeg_version:
+        description: 'ffmpeg version to build (e.g. 7.1.1)'
+        required: true
+        default: '7.1.1'
+
+jobs:
+  build-and-release:
+    name: Build universal + release (drawtext)
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Install build tools
+        run: |
+          brew install nasm lame freetype
+          # Cross-compile deps for x86_64 (Apple Silicon runner only has arm64-native Homebrew libs)
+          curl -fL "https://downloads.sourceforge.net/lame/lame-3.100.tar.gz" -o lame.tar.gz
+          tar xf lame.tar.gz
+          cd lame-3.100
+          ./configure --host=x86_64-apple-darwin --prefix=/usr/local/lame-x86_64 \
+            CC=clang CFLAGS="-arch x86_64" LDFLAGS="-arch x86_64" \
+            --disable-shared --enable-static --disable-frontend
+          make -j$(sysctl -n hw.ncpu)
+          sudo make install
+          cd ..
+
+          # freetype for x86_64 — minimal config, no harfbuzz/png/bz2/brotli,
+          # keeps this a self-contained static lib with no extra cross-compiled deps.
+          curl -fL "https://download.savannah.gnu.org/releases/freetype/freetype-2.13.3.tar.gz" -o freetype.tar.gz
+          tar xf freetype.tar.gz
+          cd freetype-2.13.3
+          ./configure --host=x86_64-apple-darwin --prefix=/usr/local/freetype-x86_64 \
+            CC=clang CFLAGS="-arch x86_64" LDFLAGS="-arch x86_64" \
+            --disable-shared --enable-static \
+            --without-harfbuzz --without-png --without-bzip2 --without-brotli --without-zlib
+          make -j$(sysctl -n hw.ncpu)
+          sudo make install
+
+      - name: Download ffmpeg source
+        run: |
+          VERSION="${{ github.event.inputs.ffmpeg_version }}"
+          curl -fL "https://ffmpeg.org/releases/ffmpeg-${VERSION}.tar.gz" -o ffmpeg.tar.gz
+          tar xf ffmpeg.tar.gz
+          mv "ffmpeg-${VERSION}" ffmpeg-src
+
+      - name: Build arm64 (native)
+        run: |
+          cd ffmpeg-src
+          LAME_PREFIX=$(brew --prefix lame)
+          FREETYPE_PREFIX=$(brew --prefix freetype)
+          ./configure \
+            --arch=arm64 \
+            --disable-gpl \
+            --disable-nonfree \
+            --disable-autodetect \
+            --enable-static \
+            --disable-shared \
+            --disable-ffplay \
+            --disable-doc \
+            --disable-debug \
+            --enable-libmp3lame \
+            --enable-libfreetype \
+            --enable-videotoolbox \
+            --extra-cflags="-arch arm64 -I${LAME_PREFIX}/include -I${FREETYPE_PREFIX}/include/freetype2" \
+            --extra-ldflags="-arch arm64 -L${LAME_PREFIX}/lib -L${FREETYPE_PREFIX}/lib"
+          make -j$(sysctl -n hw.ncpu)
+          cp ffmpeg ../ffmpeg_arm64
+          cp ffprobe ../ffprobe_arm64
+          strip ../ffmpeg_arm64 ../ffprobe_arm64
+          file ../ffmpeg_arm64 ../ffprobe_arm64
+          make distclean
+
+      - name: Build x86_64 (cross-compile)
+        run: |
+          cd ffmpeg-src
+          ./configure \
+            --arch=x86_64 \
+            --enable-cross-compile \
+            --disable-gpl \
+            --disable-nonfree \
+            --disable-autodetect \
+            --enable-static \
+            --disable-shared \
+            --disable-ffplay \
+            --disable-doc \
+            --disable-debug \
+            --enable-libmp3lame \
+            --enable-libfreetype \
+            --enable-videotoolbox \
+            --extra-cflags="-arch x86_64 -I/usr/local/lame-x86_64/include -I/usr/local/freetype-x86_64/include/freetype2" \
+            --extra-ldflags="-arch x86_64 -L/usr/local/lame-x86_64/lib -L/usr/local/freetype-x86_64/lib"
+          make -j$(sysctl -n hw.ncpu)
+          cp ffmpeg ../ffmpeg_x86_64
+          cp ffprobe ../ffprobe_x86_64
+          strip ../ffmpeg_x86_64 ../ffprobe_x86_64
+          file ../ffmpeg_x86_64 ../ffprobe_x86_64
+
+      - name: Create universal binaries
+        run: |
+          lipo -create ffmpeg_arm64 ffmpeg_x86_64 -output ffmpeg
+          lipo -create ffprobe_arm64 ffprobe_x86_64 -output ffprobe
+          chmod +x ffmpeg ffprobe
+          lipo -info ffmpeg
+          lipo -info ffprobe
+
+      - name: Sanity check (drawtext + videotoolbox present)
+        run: |
+          ./ffmpeg -hide_banner -filters | grep -q drawtext || (echo "drawtext missing!" && exit 1)
+          ./ffmpeg -hide_banner -hwaccels | grep -q videotoolbox || (echo "videotoolbox missing!" && exit 1)
+          echo "drawtext + videotoolbox confirmed present"
+
+      - name: Generate checksums
+        run: |
+          shasum -a 256 ffmpeg | awk '{print $1}' > ffmpeg.sha256
+          shasum -a 256 ffprobe | awk '{print $1}' > ffprobe.sha256
+          echo "ffmpeg SHA256: $(cat ffmpeg.sha256)"
+          echo "ffprobe SHA256: $(cat ffprobe.sha256)"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ github.event.inputs.ffmpeg_version }}"
+          TAG="drawtext-v${VERSION}"
+          NOTES="ffmpeg ${VERSION} + ffprobe, universal macOS binaries (arm64 + x86_64), with drawtext and VideoToolbox hardware acceleration enabled. Built from https://ffmpeg.org/releases/ffmpeg-${VERSION}.tar.gz with --disable-gpl --disable-nonfree --disable-autodetect --enable-static --enable-libmp3lame --enable-libfreetype --enable-videotoolbox. Licensed LGPLv2.1+. Separate release track for BurnInProxy — does not affect the main ffmpeg build used by inDEXdown."
+          gh release delete "$TAG" --repo "${{ github.repository }}" --yes 2>/dev/null || true
+          git push origin ":refs/tags/$TAG" 2>/dev/null || true
+          gh release create "$TAG" \
+            ffmpeg ffmpeg.sha256 ffprobe ffprobe.sha256 \
+            --repo "${{ github.repository }}" \
+            --title "ffmpeg ${VERSION} (drawtext + videotoolbox)" \
+            --notes "$NOTES"
