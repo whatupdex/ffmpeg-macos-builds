@@ -40,11 +40,14 @@ jobs:
 
           # freetype for x86_64; minimal config, no harfbuzz/png/bz2/brotli,
           # keeps this a self-contained static lib with no extra cross-compiled deps.
-          # Using GitHub's source archive, not Savannah's mirror -- the Savannah
-          # download returned a 502 on first attempt, GitHub's CDN is more reliable.
-          curl -fL "https://github.com/freetype/freetype/archive/refs/tags/VER-2-13-3.tar.gz" -o freetype.tar.gz
+          # Use the official release tarball, not a GitHub source snapshot -- the
+          # snapshot references a git submodule (subprojects/dlg) that isn't
+          # present without a real git checkout and fails to build. The release
+          # tarball is self-contained. Savannah's server occasionally 502s
+          # transiently, so retry rather than switch source.
+          curl -fL --retry 5 --retry-delay 5 "https://download.savannah.gnu.org/releases/freetype/freetype-2.13.3.tar.gz" -o freetype.tar.gz
           tar xf freetype.tar.gz
-          cd freetype-VER-2-13-3
+          cd freetype-2.13.3
           ./configure --host=x86_64-apple-darwin --prefix=/usr/local/freetype-x86_64 \
             CC=clang CFLAGS="-arch x86_64" LDFLAGS="-arch x86_64" \
             --disable-shared --enable-static \
