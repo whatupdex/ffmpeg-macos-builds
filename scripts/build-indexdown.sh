@@ -109,6 +109,10 @@ build_arch x86_64
 
 lipo -create "$OUT/ffmpeg_arm64" "$OUT/ffmpeg_x86_64" -output "$OUT/ffmpeg"
 chmod +x "$OUT/ffmpeg"
+# Ad-hoc sign so both slices carry a valid signature (Apple Silicon refuses unsigned arm64 code).
+# This is not a Developer ID signature; the app downloads the file itself, so no quarantine/Gatekeeper step applies.
+codesign --force --sign - "$OUT/ffmpeg"
+codesign --verify --verbose=2 "$OUT/ffmpeg"
 shasum -a 256 "$OUT/ffmpeg" | awk '{print $1}' >"$OUT/ffmpeg.sha256"
 lipo -info "$OUT/ffmpeg"
 echo "SHA256: $(cat "$OUT/ffmpeg.sha256")"
