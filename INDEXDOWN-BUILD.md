@@ -34,31 +34,48 @@ Each release has two assets:
 
 `configure` reports `License: LGPL version 2.1 or later`.
 
-## Licensing
+## Components and licenses
 
-| Component | License | How it is used |
-|---|---|---|
-| FFmpeg 7.1.x (built without `--enable-gpl` / `--enable-nonfree`) | LGPL v2.1 or later | statically linked into the executable |
-| LAME 3.100 (`libmp3lame`) | LGPL v2 or later | statically linked |
-| dav1d 1.5.x (`libdav1d`) | BSD 2-Clause | statically linked |
-| VideoToolbox, CoreMedia, CoreVideo, CoreFoundation, CoreServices | Apple system frameworks | dynamically linked from macOS |
+The license texts below are copied verbatim from the exact source tarballs and live in `licenses/`
+(regenerate with `NOTICES_ONLY=1 scripts/build-indexdown.sh`).
+
+| Component | Version | License | Text in this repo | Linked how |
+|---|---|---|---|---|
+| FFmpeg (built without `--enable-gpl` / `--enable-nonfree`) | 7.1.5 | GNU LGPL v2.1 or later | `licenses/ffmpeg-7.1.5/COPYING.LGPLv2.1`, `LICENSE.md` | the executable itself |
+| LAME (`libmp3lame`) | 3.100 | GNU Library General Public License v2 (LGPL v2), as shipped in its `COPYING` | `licenses/lame-3.100/COPYING`, `LICENSE` | statically linked |
+| dav1d (`libdav1d`) | 1.5.4 | BSD 2-Clause | `licenses/dav1d-1.5.4/COPYING` | statically linked |
+| VideoToolbox, CoreMedia, CoreVideo, CoreFoundation, CoreServices | macOS | Apple system frameworks | n/a | dynamically linked from macOS |
+
+LAME's `LICENSE` file asks that products using it acknowledge LAME with a link to its website
+(<https://lame.sourceforge.io>). inDEXdown's Help does so.
 
 Not included, on purpose: `libx264` and `libx265` (GPL), `libfdk-aac` (non-free), `ffprobe`, `drawtext`
-(freetype/harfbuzz). Nothing here depends on a patent licence beyond what Apple's VideoToolbox already
-provides on macOS.
+(freetype/harfbuzz).
 
-Distribution notes (not legal advice):
+## Exact sources (also written to `BUILDINFO.txt` by the build)
 
-- FFmpeg and LAME are LGPL and are **statically linked** into one executable. The LGPL permits that provided
-  recipients can relink against a modified library, and the corresponding source is available. Meeting
-  that means: (1) publish the exact source tarballs and build script used (this repository, plus the
-  upstream URLs and SHA-256 values pinned in `scripts/build-indexdown.sh`), and (2) keep it possible for
-  someone to rebuild the binary themselves. The build script is that mechanism.
-- inDEXdown runs this binary as a separate process (it is downloaded, not linked into the app), which keeps
-  the app itself outside the LGPL's scope. Keep it that way: do not link ffmpeg libraries into the app.
-- Ship notices with the app (Help already lists ffmpeg under "Open Source Components"): add LAME (LGPL) and
-  dav1d (BSD-2) to that list, with links to their source.
-- MP3 encoding patents expired in 2017; no separate MP3 licence is needed.
+| Source | URL | SHA-256 |
+|---|---|---|
+| ffmpeg-7.1.5.tar.xz | <https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz> (signature verified against the FFmpeg release key `FCF986EA15E6E293A5644F10B4322F04D67658D8`) | `de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f` |
+| lame-3.100.tar.gz | <https://downloads.sourceforge.net/lame/lame-3.100.tar.gz> | `ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e` |
+| dav1d-1.5.4.tar.xz | <https://downloads.videolan.org/pub/videolan/dav1d/1.5.4/dav1d-1.5.4.tar.xz> (matches the hash VideoLAN publishes) | `686616b7c69eb88d44459391ab25cac13b6647a3b288835c5784e71c1514a5c5` |
+
+## Rebuilding the distributed binary
+
+`FFMPEG_VERSION=7.1.5 scripts/build-indexdown.sh` on an Apple Silicon Mac with Xcode command line tools,
+`nasm`, `meson` and `ninja` (Homebrew). It downloads the sources above, refuses to continue on any
+checksum mismatch, builds LAME, dav1d and ffmpeg statically for arm64 and x86_64, joins them with `lipo`,
+and signs the result ad hoc. Because the three libraries are statically linked into one executable, anyone
+who wants to use a modified LAME or FFmpeg can rebuild with this script and their changed sources, which is
+how the LGPL's relinking requirement is met. Builds are not guaranteed to be bit-for-bit reproducible, so
+every release records the SHA-256 of the exact file that was published.
+
+## Distribution notes (not legal advice)
+
+- inDEXdown downloads this binary and runs it as a **separate program**; it is not linked into the app.
+  Keep it that way. If a Mac already has ffmpeg (for example from Homebrew), inDEXdown uses that one instead,
+  and that copy is covered by its own license.
+- MP3 patents expired in 2017; no separate MP3 licence is needed.
 
 ## Verification performed before release
 

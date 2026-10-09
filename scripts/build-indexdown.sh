@@ -43,6 +43,28 @@ fetch "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz" "ffmpeg-$FFMPE
 fetch "https://downloads.sourceforge.net/lame/lame-$LAME_VERSION.tar.gz" "lame-$LAME_VERSION.tar.gz" "$SHA_LAME"
 fetch "https://downloads.videolan.org/pub/videolan/dav1d/$DAV1D_VERSION/dav1d-$DAV1D_VERSION.tar.xz" "dav1d-$DAV1D_VERSION.tar.xz" "$SHA_DAV1D"
 
+collect_notices() {
+  # License texts are copied verbatim from the pinned source tarballs, so they always match the
+  # versions that were built. Also writes BUILDINFO.txt for the release notes.
+  local L="$ROOT/licenses"
+  mkdir -p "$L/ffmpeg-$FFMPEG_VERSION" "$L/lame-$LAME_VERSION" "$L/dav1d-$DAV1D_VERSION"
+  tar -xf "$SRC/ffmpeg-$FFMPEG_VERSION.tar.xz" -C "$L/ffmpeg-$FFMPEG_VERSION" --strip-components=1 \
+    "ffmpeg-$FFMPEG_VERSION/COPYING.LGPLv2.1" "ffmpeg-$FFMPEG_VERSION/LICENSE.md"
+  tar -xf "$SRC/lame-$LAME_VERSION.tar.gz" -C "$L/lame-$LAME_VERSION" --strip-components=1 \
+    "lame-$LAME_VERSION/COPYING" "lame-$LAME_VERSION/LICENSE"
+  tar -xf "$SRC/dav1d-$DAV1D_VERSION.tar.xz" -C "$L/dav1d-$DAV1D_VERSION" --strip-components=1 \
+    "dav1d-$DAV1D_VERSION/COPYING"
+  {
+    echo "ffmpeg $FFMPEG_VERSION  https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz  sha256 ${!ffmpeg_sha_var}"
+    echo "lame $LAME_VERSION  https://downloads.sourceforge.net/lame/lame-$LAME_VERSION.tar.gz  sha256 $SHA_LAME"
+    echo "dav1d $DAV1D_VERSION  https://downloads.videolan.org/pub/videolan/dav1d/$DAV1D_VERSION/dav1d-$DAV1D_VERSION.tar.xz  sha256 $SHA_DAV1D"
+    echo "macOS deployment target $MACOSX_DEPLOYMENT_TARGET"
+    [ -f "$OUT/ffmpeg" ] && { echo "--- ffmpeg -version (arm64 slice)"; arch -arm64 "$OUT/ffmpeg" -version 2>/dev/null | head -3; echo "binary sha256 $(shasum -a 256 "$OUT/ffmpeg" | awk '{print $1}')"; }
+  } > "$ROOT/BUILDINFO.txt"
+}
+
+if [ "${NOTICES_ONLY:-0}" = "1" ]; then collect_notices; echo "notices written to $ROOT/licenses"; exit 0; fi
+
 build_arch() {
   local ARCH="$1"
   local PREFIX="$WORK/prefix-$ARCH" B="$WORK/build-$ARCH"
@@ -116,3 +138,4 @@ codesign --verify --verbose=2 "$OUT/ffmpeg"
 shasum -a 256 "$OUT/ffmpeg" | awk '{print $1}' >"$OUT/ffmpeg.sha256"
 lipo -info "$OUT/ffmpeg"
 echo "SHA256: $(cat "$OUT/ffmpeg.sha256")"
+collect_notices
