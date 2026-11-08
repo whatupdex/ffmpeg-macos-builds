@@ -77,8 +77,11 @@ mpglib MP3 decoder is not built or linked (ffmpeg decodes MP3 with its own decod
 checksum mismatch, builds LAME, dav1d and ffmpeg statically for arm64 and x86_64, joins them with `lipo`,
 and signs the result ad hoc. Because the three libraries are statically linked into one executable, anyone
 who wants to use a modified LAME or FFmpeg can rebuild with this script and their changed sources, which is
-how the LGPL's relinking requirement is met. Builds are not guaranteed to be bit-for-bit reproducible, so
-every release records the SHA-256 of the exact file that was published.
+how the LGPL's relinking requirement is met. Builds are not bit-for-bit reproducible across build
+directories: `ffmpeg -version` embeds the configure line, which contains the absolute `WORK` path, and that
+shifts string offsets throughout the binary. (Two 7.1.5 builds in different directories had identical code
+section sizes and differed only by the path length in `__cstring`.) Every release therefore records the
+SHA-256 of the exact file that was published.
 
 ## Distribution notes (not legal advice)
 

@@ -1,9 +1,13 @@
 ffmpeg 7.1.5  https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz  sha256 de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f
 lame 3.100  https://downloads.sourceforge.net/lame/lame-3.100.tar.gz  sha256 ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e
 dav1d 1.5.4  https://downloads.videolan.org/pub/videolan/dav1d/1.5.4/dav1d-1.5.4.tar.xz  sha256 686616b7c69eb88d44459391ab25cac13b6647a3b288835c5784e71c1514a5c5
+ffmpeg tarball signature: verified with gpg: good signature by FFmpeg release signing key FCF986EA15E6E293A5644F10B4322F04D67658D8
+lame patch: patches/lame-3.100-symbols.patch  sha256 b839a546dbdf9fb8e24283520c2f5aad29825ff34b10ba3e6b3b2431dc111c0a
+lame configure: --disable-shared --enable-static --disable-frontend --disable-decoder
+build script commit b4185fa94172d25c8830b1b58066214c0007ce2d
 macOS deployment target 13.0
 --- ffmpeg -version (arm64 slice)
 ffmpeg version 7.1.5 Copyright (c) 2000-2026 the FFmpeg developers
 built with Apple clang version 17.0.0 (clang-1700.6.3.2)
-configuration: --arch=arm64 --cc='clang -arch arm64' --disable-gpl --disable-nonfree --disable-autodetect --enable-static --disable-shared --disable-ffplay --disable-ffprobe --disable-doc --disable-debug --enable-libmp3lame --enable-libdav1d --enable-videotoolbox --pkg-config-flags=--static --extra-cflags='-arch arm64 -mmacosx-version-min=13.0 -I/tmp/ffbuild_work/prefix-arm64/include' --extra-ldflags='-arch arm64 -mmacosx-version-min=13.0 -L/tmp/ffbuild_work/prefix-arm64/lib'
-binary sha256 b275226ae1c2aba8de7bb480531a0eb37bcf9a9f839fc4a81554ac0f0552b0d5
+configuration: --arch=arm64 --cc='clang -arch arm64' --disable-gpl --disable-nonfree --disable-autodetect --enable-static --disable-shared --disable-ffplay --disable-ffprobe --disable-doc --disable-debug --enable-libmp3lame --enable-libdav1d --enable-videotoolbox --pkg-config-flags=--static --extra-cflags='-arch arm64 -mmacosx-version-min=13.0 -I/Users/dexterthomas/Desktop/development_inDEXdown/ffmpeg-macos-builds-local/build/prefix-arm64/include' --extra-ldflags='-arch arm64 -mmacosx-version-min=13.0 -L/Users/dexterthomas/Desktop/development_inDEXdown/ffmpeg-macos-builds-local/build/prefix-arm64/lib'
+binary sha256 ab9e96ae25e29c0c278c1323910e75696ba258ab57f916e6cf02aa83cd55c180
