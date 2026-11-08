@@ -56,9 +56,19 @@ Not included, on purpose: `libx264` and `libx265` (GPL), `libfdk-aac` (non-free)
 
 | Source | URL | SHA-256 |
 |---|---|---|
-| ffmpeg-7.1.5.tar.xz | <https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz> (signature verified against the FFmpeg release key `FCF986EA15E6E293A5644F10B4322F04D67658D8`) | `de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f` |
+| ffmpeg-7.1.5.tar.xz | <https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz> (SHA-256 pinned; signature verified only when gpg is available, see below) | `de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f` |
 | lame-3.100.tar.gz | <https://downloads.sourceforge.net/lame/lame-3.100.tar.gz> | `ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e` |
 | dav1d-1.5.4.tar.xz | <https://downloads.videolan.org/pub/videolan/dav1d/1.5.4/dav1d-1.5.4.tar.xz> (matches the hash VideoLAN publishes) | `686616b7c69eb88d44459391ab25cac13b6647a3b288835c5784e71c1514a5c5` |
+| lame-3.100-symbols.patch | `patches/lame-3.100-symbols.patch` in this repository (removes the stale `lame_init_old` line from `include/libmp3lame.sym`) | recorded in `BUILDINFO.txt` |
+
+Every tarball is checked against the SHA-256 above and the build stops on a mismatch. For FFmpeg the
+script additionally verifies `ffmpeg-7.1.5.tar.xz.asc` with gpg when gpg is installed: the key is imported
+into a temporary keyring and the signature must come from exactly the FFmpeg release signing key
+`FCF986EA15E6E293A5644F10B4322F04D67658D8`, otherwise the build stops. If gpg is not installed the script
+prints a notice and only the SHA-256 pin applies. `BUILDINFO.txt` records which of the two happened.
+
+LAME is configured with `--disable-shared --enable-static --disable-frontend --disable-decoder`, so its
+mpglib MP3 decoder is not built or linked (ffmpeg decodes MP3 with its own decoder).
 
 ## Rebuilding the distributed binary
 

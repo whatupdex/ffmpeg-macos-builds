@@ -17,8 +17,11 @@ LAME_VERSION="3.100"
 DAV1D_VERSION="1.5.4"
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"   # the app's minimum macOS
 
-# Pinned source hashes. FFmpeg's tarball is also verified against the FFmpeg release signing key
-# (FCF986EA15E6E293A5644F10B4322F04D67658D8) when gpg is available; dav1d's hash is the one VideoLAN publishes.
+# Pinned source hashes (always checked; a mismatch stops the build). dav1d's hash is the one VideoLAN publishes.
+# In addition, when gpg is installed, FFmpeg's tarball signature (ffmpeg-$VERSION.tar.xz.asc) is verified and the
+# signing key must be exactly the FFmpeg release signing key below. Without gpg the build says so and records it
+# in BUILDINFO.txt; the SHA-256 pin is then the only check.
+FFMPEG_SIGNING_KEY_FPR="FCF986EA15E6E293A5644F10B4322F04D67658D8"
 SHA_FFMPEG_7_1_5="de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f"
 SHA_LAME="ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e"
 SHA_DAV1D="686616b7c69eb88d44459391ab25cac13b6647a3b288835c5784e71c1514a5c5"
@@ -40,6 +43,35 @@ ffmpeg_sha_var="SHA_FFMPEG_${FFMPEG_VERSION//./_}"
 [ -n "${!ffmpeg_sha_var:-}" ] || { echo "No pinned checksum for ffmpeg $FFMPEG_VERSION; add $ffmpeg_sha_var" >&2; exit 1; }
 
 fetch "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz" "ffmpeg-$FFMPEG_VERSION.tar.xz" "${!ffmpeg_sha_var}"
+verify_ffmpeg_signature() {
+  local tarball="$SRC/ffmpeg-$FFMPEG_VERSION.tar.xz" sig="$SRC/ffmpeg-$FFMPEG_VERSION.tar.xz.asc"
+  if ! command -v gpg >/dev/null 2>&1; then
+    echo "NOTE: gpg is not installed, so the FFmpeg tarball signature was NOT verified (SHA-256 pin only)." >&2
+    SIG_STATUS="not verified: gpg not installed; SHA-256 pin only"
+    return 0
+  fi
+  [ -f "$sig" ] || curl -fL --retry 4 --retry-delay 3 -o "$sig" "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz.asc"
+  local gh; gh="$(mktemp -d)"
+  # Import the key into a throwaway keyring (never the user's). Trust comes from the pinned fingerprint
+  # checked below, not from where the key file was downloaded.
+  if ! { curl -fsSL --retry 3 https://ffmpeg.org/ffmpeg-devel.asc | GNUPGHOME="$gh" gpg --batch --quiet --import; } >/dev/null 2>&1; then
+    GNUPGHOME="$gh" gpg --batch --quiet --keyserver hkps://keyserver.ubuntu.com --recv-keys "$FFMPEG_SIGNING_KEY_FPR" >/dev/null 2>&1 \
+      || { echo "SIGNATURE CHECK FAILED: could not obtain the FFmpeg signing key" >&2; rm -rf "$gh"; exit 1; }
+  fi
+  local status; status="$(LC_ALL=C GNUPGHOME="$gh" gpg --batch --status-fd 1 --verify "$sig" "$tarball" 2>/dev/null || true)"
+  rm -rf "$gh"
+  # VALIDSIG field 12 is the fingerprint of the primary key that made the signature.
+  local signer; signer="$(printf '%s\n' "$status" | awk '$2=="VALIDSIG"{print $12}' | head -1)"
+  if [ "$signer" != "$FFMPEG_SIGNING_KEY_FPR" ]; then
+    echo "SIGNATURE CHECK FAILED for ffmpeg-$FFMPEG_VERSION.tar.xz (signer '${signer:-none}', expected $FFMPEG_SIGNING_KEY_FPR)" >&2
+    exit 1
+  fi
+  echo "FFmpeg tarball signature OK (key $FFMPEG_SIGNING_KEY_FPR)"
+  SIG_STATUS="verified with gpg: good signature by FFmpeg release signing key $FFMPEG_SIGNING_KEY_FPR"
+}
+SIG_STATUS="not checked (NOTICES_ONLY run)"
+[ "${NOTICES_ONLY:-0}" = "1" ] || verify_ffmpeg_signature
+
 fetch "https://downloads.sourceforge.net/lame/lame-$LAME_VERSION.tar.gz" "lame-$LAME_VERSION.tar.gz" "$SHA_LAME"
 fetch "https://downloads.videolan.org/pub/videolan/dav1d/$DAV1D_VERSION/dav1d-$DAV1D_VERSION.tar.xz" "dav1d-$DAV1D_VERSION.tar.xz" "$SHA_DAV1D"
 
@@ -58,6 +90,10 @@ collect_notices() {
     echo "ffmpeg $FFMPEG_VERSION  https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz  sha256 ${!ffmpeg_sha_var}"
     echo "lame $LAME_VERSION  https://downloads.sourceforge.net/lame/lame-$LAME_VERSION.tar.gz  sha256 $SHA_LAME"
     echo "dav1d $DAV1D_VERSION  https://downloads.videolan.org/pub/videolan/dav1d/$DAV1D_VERSION/dav1d-$DAV1D_VERSION.tar.xz  sha256 $SHA_DAV1D"
+    echo "ffmpeg tarball signature: $SIG_STATUS"
+    echo "lame patch: patches/lame-$LAME_VERSION-symbols.patch  sha256 $(shasum -a 256 "$ROOT/patches/lame-$LAME_VERSION-symbols.patch" | awk '{print $1}')"
+    echo "lame configure: --disable-shared --enable-static --disable-frontend --disable-decoder"
+    echo "build script commit $(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)$(git -C "$ROOT" diff --quiet HEAD -- scripts patches 2>/dev/null || echo ' (with uncommitted changes)')"
     echo "macOS deployment target $MACOSX_DEPLOYMENT_TARGET"
     [ -f "$OUT/ffmpeg" ] && { echo "--- ffmpeg -version (arm64 slice)"; arch -arm64 "$OUT/ffmpeg" -version 2>/dev/null | head -3; echo "binary sha256 $(shasum -a 256 "$OUT/ffmpeg" | awk '{print $1}')"; }
   } > "$ROOT/BUILDINFO.txt"
@@ -79,8 +115,9 @@ build_arch() {
   echo "=== [$ARCH] lame $LAME_VERSION"
   tar -xf "$SRC/lame-$LAME_VERSION.tar.gz" -C "$B"
   ( cd "$B/lame-$LAME_VERSION"
-    sed -i '' '/lame_init_old/d' include/libmp3lame.sym      # symbol removed upstream; breaks modern linkers
-    ./configure --host="$HOST" --prefix="$PREFIX" --disable-shared --enable-static --disable-frontend \
+    patch -p1 <"$ROOT/patches/lame-$LAME_VERSION-symbols.patch" >/dev/null   # drop lame_init_old; breaks modern linkers
+    # --disable-decoder: leave out LAME's mpglib MP3 decoder (ffmpeg has its own and never uses it).
+    ./configure --host="$HOST" --prefix="$PREFIX" --disable-shared --enable-static --disable-frontend --disable-decoder \
       CC="clang" CFLAGS="$CFLAGS_ARCH -O2" LDFLAGS="$CFLAGS_ARCH" >"$WORK/lame-$ARCH.log" 2>&1
     make -j"$JOBS" >>"$WORK/lame-$ARCH.log" 2>&1
     make install >>"$WORK/lame-$ARCH.log" 2>&1 )
