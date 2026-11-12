@@ -86,8 +86,10 @@ SHA-256 of the exact file that was published.
 ## Distribution notes (not legal advice)
 
 - inDEXdown downloads this binary and runs it as a **separate program**; it is not linked into the app.
-  Keep it that way. If a Mac already has ffmpeg (for example from Homebrew), inDEXdown uses that one instead,
-  and that copy is covered by its own license.
+  Keep it that way. inDEXdown uses this build by default; a user can choose another ffmpeg already on the
+  Mac (for example Homebrew's) in Settings > Media Engine, and that copy is covered by its own license.
+- Each release attaches the corresponding sources (the three tarballs, FFmpeg's signature, the LAME patch),
+  `BUILDINFO.txt` and the license texts, so the source offer does not depend on upstream mirrors.
 - MP3 patents expired in 2017; no separate MP3 licence is needed.
 
 ## Verification performed before release
@@ -95,3 +97,22 @@ SHA-256 of the exact file that was published.
 See the candidate report. Every release should re-run: `-encoders`/`-decoders` checks, the MP3 conversion
 through the real yt-dlp command line, the H.264 conversion command inDEXdown issues, a decode matrix, and
 both architecture slices.
+
+## Publishing a release (rules)
+
+- **Published releases are immutable.** inDEXdown pins the SHA-256 of each version it installs
+  (`FFmpegRelease.pinnedSHA256`). Never delete, replace or re-upload the assets of a published release or
+  move its tag; a rebuild, even of the same version, gets a new version tag and a new pin in a new app build.
+  Both workflows refuse to run for a tag that already exists.
+- **Tags:** inDEXdown's track is `vMAJOR.MINOR.PATCH`. Other tracks (BurnInProxy's `drawtext-v...`) are
+  ignored by inDEXdown 0.6.48 and later.
+- **Latest:** the newest `v` release must be GitHub's Latest, because inDEXdown 0.6.47 and earlier install
+  whatever release is Latest. `build-drawtext.yml` always passes `--latest=false`. `build.yml` (the
+  legacy LAME-only build) only creates drafts that are not Latest.
+- **Assets:** `ffmpeg` and `ffmpeg.sha256` (exact names; the checksum file is 64 lowercase hex characters
+  and a newline), plus the sources, patch, `BUILDINFO.txt` and `licenses.zip`.
+- **Before publishing:** the SHA-256 of the file must equal both `ffmpeg.sha256` and the app's pin; run the
+  checks in "Verification performed before release" on both slices.
+- **After publishing:** check with read-only API calls that `/releases/latest` is the new tag, that the
+  asset digests equal the pinned hash, and that the earlier releases are unchanged.
+

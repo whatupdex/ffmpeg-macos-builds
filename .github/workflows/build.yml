@@ -1,5 +1,11 @@
 name: Build ffmpeg (LGPL, universal macOS)
 
+# Legacy LAME-only build. inDEXdown's managed builds from 7.1.5 on are made with
+# scripts/build-indexdown.sh (VideoToolbox, libdav1d, LAME without its decoder) and published by
+# hand after verification (INDEXDOWN-BUILD.md). This workflow therefore only ever creates a DRAFT
+# release, never marked Latest, and refuses any tag that already exists: nothing it makes reaches
+# users until a maintainer checks it and publishes it, and no published release can be replaced.
+
 on:
   workflow_dispatch:
     inputs:
@@ -16,6 +22,20 @@ jobs:
       contents: write
 
     steps:
+      - name: Refuse to replace a published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Published releases are immutable: apps pin the exact bytes they install (inDEXdown pins
+          # each version's SHA-256), so a rebuild under an existing tag would break them. Re-running
+          # a version is refused; publish a new version instead.
+          TAG="v${{ github.event.inputs.ffmpeg_version }}"
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1 \
+             || gh api "repos/${{ github.repository }}/git/refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::$TAG already exists. Published releases are never deleted or replaced; use a new version."
+            exit 1
+          fi
+
       - name: Install build tools
         run: |
           brew install nasm lame
@@ -101,13 +121,14 @@ jobs:
           VERSION="${{ github.event.inputs.ffmpeg_version }}"
           TAG="v${VERSION}"
           NOTES="ffmpeg ${VERSION} universal macOS binary (arm64 + x86_64). Built from https://ffmpeg.org/releases/ffmpeg-${VERSION}.tar.gz with --disable-gpl --disable-nonfree --disable-autodetect --enable-static --enable-libmp3lame. Licensed LGPLv2.1+."
-          # Delete existing release + tag if present (allows re-running same version)
-          gh release delete "$TAG" --repo "${{ github.repository }}" --yes 2>/dev/null || true
-          git push origin ":refs/tags/$TAG" 2>/dev/null || true
+          # Never delete or replace an existing release or tag (checked again here, after the build).
+          # Draft only, not Latest: a maintainer verifies and publishes it by hand.
           gh release create "$TAG" \
             ffmpeg \
             ffmpeg.sha256 \
             --repo "${{ github.repository }}" \
             --title "ffmpeg ${VERSION}" \
-            --notes "$NOTES"
+            --notes "$NOTES" \
+            --draft \
+            --latest=false
 

@@ -52,6 +52,20 @@ jobs:
       contents: write
 
     steps:
+      - name: Refuse to replace a published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Published releases are immutable: apps pin the exact bytes they install (inDEXdown pins
+          # each version's SHA-256), so a rebuild under an existing tag would break them. Re-running
+          # a version is refused; publish a new version instead.
+          TAG="drawtext-v${{ github.event.inputs.ffmpeg_version }}"
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1 \
+             || gh api "repos/${{ github.repository }}/git/refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::$TAG already exists. Published releases are never deleted or replaced; use a new version."
+            exit 1
+          fi
+
       - name: Install build tools
         run: |
           brew install nasm meson ninja pkg-config
@@ -268,10 +282,12 @@ jobs:
           VERSION="${{ github.event.inputs.ffmpeg_version }}"
           TAG="drawtext-v${VERSION}"
           NOTES="ffmpeg ${VERSION} + ffprobe, universal macOS binaries (arm64 + x86_64), with drawtext and VideoToolbox hardware acceleration enabled. Built from https://ffmpeg.org/releases/ffmpeg-${VERSION}.tar.gz with --disable-gpl --disable-nonfree --disable-autodetect --enable-static --enable-libfreetype --enable-libharfbuzz --enable-videotoolbox. freetype and harfbuzz are built from source as static archives, so these binaries do not depend on Homebrew being installed. Licensed LGPLv2.1+. Separate release track for BurnInProxy; does not affect the main ffmpeg build used by inDEXdown."
-          gh release delete "$TAG" --repo "${{ github.repository }}" --yes 2>/dev/null || true
-          git push origin ":refs/tags/$TAG" 2>/dev/null || true
+          # Never delete or replace an existing release or tag (checked again by gh, which refuses
+          # an existing release). Never Latest: "Latest" is inDEXdown's track; older inDEXdown
+          # versions install whatever release is Latest.
           gh release create "$TAG" \
             ffmpeg ffmpeg.sha256 ffprobe ffprobe.sha256 \
             --repo "${{ github.repository }}" \
             --title "ffmpeg ${VERSION} (drawtext + videotoolbox)" \
-            --notes "$NOTES"
+            --notes "$NOTES" \
+            --latest=false
